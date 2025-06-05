@@ -2,15 +2,20 @@ import React, { useState, useEffect } from 'react'
 import { FiSearch, FiLoader } from 'react-icons/fi'
 import toast from 'react-hot-toast'
 import AnalysisResult from '../components/AnalysisResult'
+import SeoScoreDashboard from '../components/SeoScoreDashboard'
 import { fetchAndAnalyzeUrl } from '../lib/openai'
-import { supabase } from '../lib/supabase'
+import { calculateSeoScore } from '../lib/seoScoring'
+import { supabase, refreshSchemaCache, verifyAnalysesTableStructure } from '../lib/supabase'
 
 export default function Analyzer() {
   const [url, setUrl] = useState('')
+  const [focusKeyword, setFocusKeyword] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
+  const [scoreDetails, setScoreDetails] = useState(null)
   const [apiKeySet, setApiKeySet] = useState(false)
   const [error, setError] = useState(null)
+  const [dbReady, setDbReady] = useState(false)
   
   useEffect(() => {
     const checkApiKey = () => {
@@ -21,16 +26,51 @@ export default function Analyzer() {
     checkApiKey()
     window.addEventListener('storage', checkApiKey)
     
+    // Verify database structure on component mount
+    const initDb = async () => {
+      try {
+        // First refresh the schema cache
+        await refreshSchemaCache()
+        
+        // Then verify the table structure
+        const verified = await verifyAnalysesTableStructure()
+        setDbReady(verified)
+        
+        if (!verified) {
+          console.warn('Database structure verification failed')
+        }
+      } catch (error) {
+        console.error('Database initialization error:', error)
+      }
+    }
+    
+    initDb()
+    
     return () => {
       window.removeEventListener('storage', checkApiKey)
     }
   }, [])
+  
+  // Calculate SEO score whenever result changes
+  useEffect(() => {
+    if (result) {
+      const score = calculateSeoScore(result, url, focusKeyword)
+      setScoreDetails(score)
+    } else {
+      setScoreDetails(null)
+    }
+  }, [result, url, focusKeyword])
   
   const handleSubmit = async (e) => {
     e.preventDefault()
     
     if (!url) {
       toast.error('Please enter a URL')
+      return
+    }
+    
+    if (!focusKeyword) {
+      toast.error('Please enter a focus keyword')
       return
     }
     
@@ -49,30 +89,88 @@ export default function Analyzer() {
     
     setLoading(true)
     setResult(null)
+    setScoreDetails(null)
     setError(null)
     
     try {
       const analysisResult = await fetchAndAnalyzeUrl(url)
+      
+      if (!analysisResult) {
+        throw new Error('No analysis result returned')
+      }
+      
       setResult(analysisResult)
       
-      // Save to database
-      const { data, error: dbError } = await supabase
-        .from('analyses')
-        .insert([
-          { 
-            url, 
-            result: analysisResult 
-          }
-        ])
-        .select()
+      // Calculate SEO score
+      const score = calculateSeoScore(analysisResult, url, focusKeyword)
+      setScoreDetails(score)
       
-      if (dbError) {
-        console.error('Database error:', dbError)
-        toast.error('Failed to save analysis to history: ' + dbError.message)
-        // Don't throw here, we still want to show results even if DB save fails
-      } else {
-        console.log('Analysis saved to database successfully:', data)
-        toast.success('Analysis completed and saved to history')
+      // Prepare data for database
+      const analysisData = {
+        url: url,
+        focus_keyword: focusKeyword,
+        result: analysisResult,
+        score: score.overallScore
+      }
+      
+      console.log('Saving analysis to database:', analysisData)
+      
+      // Verify database structure before saving
+      if (!dbReady) {
+        await verifyAnalysesTableStructure()
+      }
+      
+      // Save to database
+      try {
+        // First try with the focus_keyword column
+        const { data, error: dbError } = await supabase
+          .from('analyses')
+          .insert([analysisData])
+          .select()
+        
+        if (dbError) {
+          console.error('Database error:', dbError)
+          
+          // If there's an error with focus_keyword, try without it
+          if (dbError.message.includes('focus_keyword')) {
+            console.log('Trying to save without focus_keyword')
+            
+            const fallbackData = {
+              url: url,
+              result: {
+                ...analysisResult,
+                focus_keyword: focusKeyword // Include focus_keyword in the result JSON instead
+              },
+              score: score.overallScore
+            }
+            
+            const { data: fallbackResult, error: fallbackError } = await supabase
+              .from('analyses')
+              .insert([fallbackData])
+              .select()
+            
+            if (fallbackError) {
+              throw fallbackError
+            } else {
+              console.log('Analysis saved to database without focus_keyword column:', fallbackResult)
+              toast.success('Analysis completed and saved to history (focus keyword stored in result)')
+            }
+          } else {
+            throw dbError
+          }
+        } else {
+          console.log('Analysis saved to database successfully:', data)
+          
+          // Show appropriate toast message based on analysis type
+          if (analysisResult.analysisType === 'url-only') {
+            toast.success('URL-only analysis completed and saved to history')
+          } else {
+            toast.success('Full content analysis completed and saved to history')
+          }
+        }
+      } catch (dbError) {
+        console.error('Error saving to database:', dbError)
+        toast.error('Failed to save analysis to history: ' + (dbError.message || 'Unknown error'))
       }
     } catch (error) {
       console.error('Analysis error:', error)
@@ -94,8 +192,8 @@ export default function Analyzer() {
       
       <div className="card p-6">
         <form onSubmit={handleSubmit}>
-          <div className="flex flex-col md:flex-row gap-4">
-            <div className="flex-grow">
+          <div className="flex flex-col gap-4">
+            <div>
               <label htmlFor="url" className="block text-sm font-medium text-gray-700 mb-1">
                 URL to Analyze
               </label>
@@ -110,7 +208,27 @@ export default function Analyzer() {
                 disabled={loading}
               />
             </div>
-            <div className="flex items-end">
+            
+            <div>
+              <label htmlFor="focusKeyword" className="block text-sm font-medium text-gray-700 mb-1">
+                Focus Keyword
+              </label>
+              <input
+                type="text"
+                id="focusKeyword"
+                name="focusKeyword"
+                value={focusKeyword}
+                onChange={(e) => setFocusKeyword(e.target.value)}
+                placeholder="e.g., digital marketing"
+                className="input"
+                disabled={loading}
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Enter the main keyword you want to rank for. This will be used to calculate your SEO score.
+              </p>
+            </div>
+            
+            <div className="flex justify-end">
               <button
                 type="submit"
                 className="btn btn-primary w-full md:w-auto flex items-center justify-center"
@@ -158,7 +276,9 @@ export default function Analyzer() {
           </div>
         )}
         
-        <AnalysisResult result={result} url={url} />
+        {scoreDetails && <SeoScoreDashboard scoreDetails={scoreDetails} />}
+        
+        <AnalysisResult result={result} url={url} focusKeyword={focusKeyword} />
       </div>
     </div>
   )

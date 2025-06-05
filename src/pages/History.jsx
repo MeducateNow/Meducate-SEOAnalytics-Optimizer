@@ -1,96 +1,64 @@
 import React, { useState, useEffect } from 'react'
-import { FiLoader, FiExternalLink, FiTrash2 } from 'react-icons/fi'
+import { Link } from 'react-router-dom'
+import { FiExternalLink, FiClock, FiBarChart2, FiLoader } from 'react-icons/fi'
 import { supabase } from '../lib/supabase'
-import AnalysisResult from '../components/AnalysisResult'
-import toast from 'react-hot-toast'
+import { formatDistanceToNow } from 'date-fns'
 
 export default function History() {
   const [analyses, setAnalyses] = useState([])
   const [loading, setLoading] = useState(true)
-  const [selectedAnalysis, setSelectedAnalysis] = useState(null)
-  const [deleting, setDeleting] = useState(false)
+  const [error, setError] = useState(null)
   
   useEffect(() => {
+    async function fetchAnalyses() {
+      try {
+        setLoading(true)
+        
+        const { data, error } = await supabase
+          .from('analyses')
+          .select('*')
+          .order('created_at', { ascending: false })
+        
+        if (error) {
+          throw error
+        }
+        
+        setAnalyses(data || [])
+      } catch (error) {
+        console.error('Error fetching analyses:', error)
+        setError(error.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+    
     fetchAnalyses()
   }, [])
   
-  const fetchAnalyses = async () => {
+  // Function to get domain from URL
+  const getDomain = (url) => {
     try {
-      setLoading(true)
-      
-      const { data, error } = await supabase
-        .from('analyses')
-        .select('*')
-        .order('created_at', { ascending: false })
-      
-      if (error) {
-        console.error('Error fetching analyses:', error)
-        toast.error('Failed to load history: ' + error.message)
-        return
-      }
-      
-      setAnalyses(data || [])
-      
-      // Select the first analysis by default if available
-      if (data && data.length > 0 && !selectedAnalysis) {
-        setSelectedAnalysis(data[0])
-      }
+      const domain = new URL(url).hostname
+      return domain.replace('www.', '')
     } catch (error) {
-      console.error('Error in fetchAnalyses:', error)
-      toast.error('An error occurred while loading history')
-    } finally {
-      setLoading(false)
+      return url
     }
   }
   
-  const handleDelete = async (id) => {
-    if (!confirm('Are you sure you want to delete this analysis?')) {
-      return
-    }
-    
-    try {
-      setDeleting(true)
-      
-      const { error } = await supabase
-        .from('analyses')
-        .delete()
-        .eq('id', id)
-      
-      if (error) {
-        console.error('Error deleting analysis:', error)
-        toast.error('Failed to delete analysis: ' + error.message)
-        return
-      }
-      
-      // Remove from state
-      setAnalyses(analyses.filter(analysis => analysis.id !== id))
-      
-      // If the deleted analysis was selected, clear selection
-      if (selectedAnalysis && selectedAnalysis.id === id) {
-        setSelectedAnalysis(null)
-      }
-      
-      toast.success('Analysis deleted successfully')
-    } catch (error) {
-      console.error('Error in handleDelete:', error)
-      toast.error('An error occurred while deleting the analysis')
-    } finally {
-      setDeleting(false)
-    }
-  }
-  
-  // Format date to a readable string
+  // Function to format date
   const formatDate = (dateString) => {
-    if (!dateString) return 'Unknown date'
-    const date = new Date(dateString)
-    return date.toLocaleString()
+    try {
+      return formatDistanceToNow(new Date(dateString), { addSuffix: true })
+    } catch (error) {
+      return 'Unknown date'
+    }
   }
   
-  // Truncate URL if it's too long
-  const truncateUrl = (url, maxLength = 40) => {
-    if (!url) return 'Unknown URL'
-    if (url.length <= maxLength) return url
-    return url.substring(0, maxLength) + '...'
+  // Function to get score color class
+  const getScoreColorClass = (score) => {
+    if (score >= 80) return 'bg-green-100 text-green-800'
+    if (score >= 60) return 'bg-amber-100 text-amber-800'
+    return 'bg-red-100 text-red-800'
   }
   
   return (
@@ -98,92 +66,112 @@ export default function History() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900">Analysis History</h1>
         <p className="mt-1 text-sm text-gray-500">
-          View and manage your previous URL analyses
+          View your previous SEO analyses
         </p>
       </div>
       
       {loading ? (
-        <div className="flex justify-center items-center py-12">
+        <div className="flex items-center justify-center py-12">
           <FiLoader className="animate-spin h-8 w-8 text-primary-600 mr-3" />
           <span>Loading analysis history...</span>
         </div>
+      ) : error ? (
+        <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+          <h3 className="text-md font-medium text-red-800 mb-2">Error Loading History</h3>
+          <p className="text-sm text-red-700">{error}</p>
+        </div>
       ) : analyses.length === 0 ? (
-        <div className="card p-12 text-center">
-          <p className="text-gray-500 mb-4">No analyses found in your history.</p>
-          <a href="/analyzer" className="btn btn-primary">
+        <div className="card p-6 text-center">
+          <p className="text-gray-500 mb-4">You haven't analyzed any URLs yet.</p>
+          <Link to="/analyzer" className="btn btn-primary">
             Analyze a URL
-          </a>
+          </Link>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1">
-            <div className="card overflow-hidden">
-              <div className="px-4 py-5 sm:px-6 bg-white border-b border-gray-200">
-                <h3 className="text-lg font-medium leading-6 text-gray-900">
-                  Your Analyses
-                </h3>
-              </div>
-              <ul className="divide-y divide-gray-200 max-h-[600px] overflow-y-auto">
+        <div className="card p-6">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    URL
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Score
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Analysis Type
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
                 {analyses.map((analysis) => (
-                  <li 
-                    key={analysis.id}
-                    className={`hover:bg-gray-50 cursor-pointer ${
-                      selectedAnalysis?.id === analysis.id ? 'bg-primary-50' : ''
-                    }`}
-                    onClick={() => setSelectedAnalysis(analysis)}
-                  >
-                    <div className="px-4 py-4 sm:px-6 flex justify-between">
-                      <div className="truncate">
-                        <div className="flex items-center">
-                          <p className="text-sm font-medium text-primary-600 truncate">
-                            {truncateUrl(analysis.url)}
-                          </p>
-                          <a 
-                            href={analysis.url} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="ml-2 text-gray-400 hover:text-gray-500"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <FiExternalLink className="h-4 w-4" />
-                          </a>
+                  <tr key={analysis.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-gray-100 rounded-md">
+                          {getDomain(analysis.url).charAt(0).toUpperCase()}
                         </div>
-                        <p className="mt-1 text-xs text-gray-500">
-                          {formatDate(analysis.created_at)}
-                        </p>
+                        <div className="ml-4">
+                          <div className="text-sm font-medium text-gray-900 truncate max-w-xs">
+                            {getDomain(analysis.url)}
+                          </div>
+                          <div className="text-xs text-gray-500 truncate max-w-xs">
+                            {analysis.url}
+                          </div>
+                        </div>
                       </div>
-                      <button
-                        className="text-gray-400 hover:text-red-500"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleDelete(analysis.id)
-                        }}
-                        disabled={deleting}
-                      >
-                        <FiTrash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </li>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {analysis.score !== null ? (
+                        <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${getScoreColorClass(analysis.score)}`}>
+                          {analysis.score}/100
+                        </span>
+                      ) : (
+                        <span className="text-gray-500 text-xs">No score</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${analysis.result?.analysisType === 'url-only' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}`}>
+                        {analysis.result?.analysisType === 'url-only' ? 'URL Only' : 'Full Content'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      <div className="flex items-center">
+                        <FiClock className="mr-1 h-4 w-4 text-gray-400" />
+                        {formatDate(analysis.created_at)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <div className="flex space-x-2">
+                        <a 
+                          href={analysis.url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-gray-500 hover:text-gray-700"
+                          title="Open URL"
+                        >
+                          <FiExternalLink className="h-5 w-5" />
+                        </a>
+                        <Link
+                          to={`/analyzer?url=${encodeURIComponent(analysis.url)}`}
+                          className="text-primary-600 hover:text-primary-800"
+                          title="Re-analyze"
+                        >
+                          <FiBarChart2 className="h-5 w-5" />
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
                 ))}
-              </ul>
-            </div>
-          </div>
-          
-          <div className="lg:col-span-2">
-            {selectedAnalysis ? (
-              <div className="card p-6">
-                <AnalysisResult 
-                  result={selectedAnalysis.result} 
-                  url={selectedAnalysis.url} 
-                />
-              </div>
-            ) : (
-              <div className="card p-12 text-center">
-                <p className="text-gray-500">
-                  Select an analysis from the list to view details
-                </p>
-              </div>
-            )}
+              </tbody>
+            </table>
           </div>
         </div>
       )}

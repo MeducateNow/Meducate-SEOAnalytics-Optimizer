@@ -1,12 +1,20 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { FiSearch, FiClock, FiSettings, FiLoader } from 'react-icons/fi'
+import { FiSearch, FiClock, FiSettings, FiLoader, FiBarChart2, FiLink, FiFileText } from 'react-icons/fi'
 import { supabase } from '../lib/supabase'
+import StatCard from '../components/StatCard'
+import KeywordChart from '../components/KeywordChart'
 
 export default function Dashboard() {
   const [recentAnalyses, setRecentAnalyses] = useState([])
   const [loading, setLoading] = useState(true)
   const [apiKeySet, setApiKeySet] = useState(false)
+  const [stats, setStats] = useState({
+    totalAnalyses: 0,
+    averageScore: 0,
+    topKeywords: [],
+    recentActivity: 0
+  })
   
   useEffect(() => {
     const checkApiKey = () => {
@@ -23,30 +31,68 @@ export default function Dashboard() {
   }, [])
   
   useEffect(() => {
-    const fetchRecentAnalyses = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true)
         
-        const { data, error } = await supabase
+        // Fetch recent analyses
+        const { data: analysesData, error: analysesError } = await supabase
           .from('analyses')
           .select('*')
           .order('created_at', { ascending: false })
           .limit(5)
         
-        if (error) {
-          console.error('Error fetching recent analyses:', error)
+        if (analysesError) {
+          console.error('Error fetching recent analyses:', analysesError)
           return
         }
         
-        setRecentAnalyses(data || [])
+        setRecentAnalyses(analysesData || [])
+        
+        // Fetch stats
+        const { data: statsData, error: statsError } = await supabase
+          .from('analyses')
+          .select('*')
+        
+        if (statsError) {
+          console.error('Error fetching stats:', statsError)
+          return
+        }
+        
+        // Calculate stats
+        const totalAnalyses = statsData?.length || 0;
+        
+        // Calculate average score
+        const scores = statsData
+          ?.map(analysis => analysis.score || 0)
+          .filter(score => score > 0);
+        
+        const averageScore = scores?.length 
+          ? Math.round(scores.reduce((sum, score) => sum + score, 0) / scores.length) 
+          : 0;
+        
+        // Calculate recent activity (analyses in the last 7 days)
+        const oneWeekAgo = new Date();
+        oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+        
+        const recentActivity = statsData?.filter(analysis => {
+          const analysisDate = new Date(analysis.created_at);
+          return analysisDate >= oneWeekAgo;
+        }).length || 0;
+        
+        setStats({
+          totalAnalyses,
+          averageScore,
+          recentActivity
+        });
       } catch (error) {
-        console.error('Error in fetchRecentAnalyses:', error)
+        console.error('Error in fetchData:', error)
       } finally {
         setLoading(false)
       }
     }
     
-    fetchRecentAnalyses()
+    fetchData()
   }, [])
   
   // Format date to a readable string
@@ -85,44 +131,62 @@ export default function Dashboard() {
       )}
       
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <Link
-          to="/analyzer"
-          className="card p-6 hover:shadow-md transition-shadow flex flex-col items-center text-center"
-        >
-          <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center mb-4">
-            <FiSearch className="h-6 w-6 text-primary-600" />
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Analyze URL</h3>
-          <p className="text-sm text-gray-500">
-            Analyze a webpage and get AI-powered SEO suggestions
-          </p>
-        </Link>
+        <StatCard 
+          title="Total Analyses" 
+          value={stats.totalAnalyses} 
+          icon={<FiBarChart2 className="h-6 w-6" />} 
+        />
         
-        <Link
-          to="/history"
-          className="card p-6 hover:shadow-md transition-shadow flex flex-col items-center text-center"
-        >
-          <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center mb-4">
-            <FiClock className="h-6 w-6 text-primary-600" />
-          </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">View History</h3>
-          <p className="text-sm text-gray-500">
-            Access your previous analyses and results
-          </p>
-        </Link>
+        <StatCard 
+          title="Average SEO Score" 
+          value={`${stats.averageScore}/100`} 
+          icon={<FiFileText className="h-6 w-6" />} 
+          change={stats.averageScore > 70 ? "Good" : "Needs improvement"} 
+          changeType={stats.averageScore > 70 ? "positive" : "negative"} 
+        />
         
-        <Link
-          to="/settings"
-          className="card p-6 hover:shadow-md transition-shadow flex flex-col items-center text-center"
-        >
-          <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center mb-4">
-            <FiSettings className="h-6 w-6 text-primary-600" />
+        <StatCard 
+          title="Recent Activity" 
+          value={stats.recentActivity} 
+          icon={<FiClock className="h-6 w-6" />} 
+          change="Last 7 days" 
+        />
+      </div>
+      
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="card p-6 md:col-span-2">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Keyword Trends</h3>
+          <KeywordChart analyses={recentAnalyses} />
+        </div>
+        
+        <div className="card p-6">
+          <h3 className="text-lg font-medium text-gray-900 mb-4">Quick Actions</h3>
+          <div className="space-y-3">
+            <Link
+              to="/analyzer"
+              className="flex items-center p-3 bg-primary-50 text-primary-700 rounded-md hover:bg-primary-100 transition-colors"
+            >
+              <FiSearch className="h-5 w-5 mr-3" />
+              <span>Analyze New URL</span>
+            </Link>
+            
+            <Link
+              to="/history"
+              className="flex items-center p-3 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+            >
+              <FiClock className="h-5 w-5 mr-3" />
+              <span>View Analysis History</span>
+            </Link>
+            
+            <Link
+              to="/settings"
+              className="flex items-center p-3 bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+            >
+              <FiSettings className="h-5 w-5 mr-3" />
+              <span>Configure Settings</span>
+            </Link>
           </div>
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Settings</h3>
-          <p className="text-sm text-gray-500">
-            Configure your API keys and preferences
-          </p>
-        </Link>
+        </div>
       </div>
       
       <div className="card overflow-hidden">
@@ -155,6 +219,9 @@ export default function Dashboard() {
                   <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Date
                   </th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Score
+                  </th>
                   <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Action
                   </th>
@@ -168,13 +235,29 @@ export default function Dashboard() {
                         href={analysis.url} 
                         target="_blank" 
                         rel="noopener noreferrer"
-                        className="text-primary-600 hover:text-primary-800 hover:underline"
+                        className="text-primary-600 hover:text-primary-800 hover:underline flex items-center"
                       >
+                        <FiLink className="h-4 w-4 mr-2" />
                         {truncateUrl(analysis.url)}
                       </a>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                       {formatDate(analysis.created_at)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      {analysis.score ? (
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          analysis.score >= 80 
+                            ? 'bg-green-100 text-green-800' 
+                            : analysis.score >= 60 
+                              ? 'bg-amber-100 text-amber-800' 
+                              : 'bg-red-100 text-red-800'
+                        }`}>
+                          {analysis.score}/100
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-500">N/A</span>
+                      )}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <Link

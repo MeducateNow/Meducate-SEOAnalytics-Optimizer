@@ -1,7 +1,7 @@
 import React from 'react'
-import { FiCheckCircle, FiAlertCircle } from 'react-icons/fi'
+import { FiCheckCircle, FiAlertCircle, FiInfo } from 'react-icons/fi'
 
-export default function AnalysisResult({ result, url }) {
+export default function AnalysisResult({ result, url, focusKeyword }) {
   if (!result) return null
   
   const {
@@ -10,12 +10,40 @@ export default function AnalysisResult({ result, url }) {
     tags,
     metaDescriptions,
     analysis,
-    recommendations
+    recommendations,
+    analysisType
   } = result
+  
+  const isUrlOnlyAnalysis = analysisType === 'url-only'
   
   return (
     <div className="mt-8">
       <h2 className="text-xl font-bold text-gray-900 mb-4">Analysis Results for {url}</h2>
+      
+      {isUrlOnlyAnalysis && (
+        <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-md">
+          <div className="flex items-start">
+            <FiInfo className="h-5 w-5 text-blue-500 mr-2 mt-0.5" />
+            <div>
+              <h3 className="text-md font-medium text-blue-800 mb-1">URL-Only Analysis</h3>
+              <p className="text-sm text-blue-700">
+                Due to CORS restrictions, we couldn't access the page content directly. 
+                This analysis is based on the URL structure only and may not be as accurate as a full content analysis.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {focusKeyword && (
+        <div className="mb-6 p-4 bg-primary-50 border border-primary-200 rounded-md">
+          <h3 className="text-md font-medium text-primary-800 mb-1">Focus Keyword</h3>
+          <p className="text-sm text-primary-700">
+            Your SEO score is calculated based on how well your content is optimized for: 
+            <span className="font-semibold ml-1">{focusKeyword}</span>
+          </p>
+        </div>
+      )}
       
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <div className="card p-5">
